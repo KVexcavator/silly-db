@@ -93,4 +93,22 @@ mod tests {
         assert_eq!(decoded.key, b"barbambia");
         assert_eq!(decoded.val, b"kergudu");
     }
+
+    #[test]
+    fn encode_into_then_decode() {
+        let entry = Entry {
+            key: b"barbambia".to_vec(),
+            val: b"kergudu".to_vec(),
+        };
+
+        let mut buf = std::io::Cursor::new(Vec::new());
+        entry.encode_into(&mut buf).unwrap();
+
+        buf.set_position(0);
+
+        let decoded = Entry::decode(&mut buf).unwrap();
+
+        assert_eq!(decoded.key, b"barbambia");
+        assert_eq!(decoded.val, b"kergudu");
+    }
 }
