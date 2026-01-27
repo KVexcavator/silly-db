@@ -1,3 +1,4 @@
+//! key value interface
 use std::collections::HashMap;
 
 pub struct KV {
@@ -35,64 +36,63 @@ impl KV {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn can_open_and_close(){
-    let mut kv = KV::open().unwrap();
-    kv.close().unwrap();
-  }
+    #[test]
+    fn can_open_and_close() {
+        let mut kv = KV::open().unwrap();
+        kv.close().unwrap();
+    }
 
-  #[test]
-  fn get_missing_key(){
-    let kv = KV::open().unwrap();
-    let value = kv.get(b"missing").unwrap();
-    assert!(value.is_none());
-  }
+    #[test]
+    fn get_missing_key() {
+        let kv = KV::open().unwrap();
+        let value = kv.get(b"missing").unwrap();
+        assert!(value.is_none());
+    }
 
-  #[test]
-  fn can_set_and_get(){
-    let mut kv = KV::open().unwrap();
+    #[test]
+    fn can_set_and_get() {
+        let mut kv = KV::open().unwrap();
 
-    let updated = kv.set(b"key", b"value").unwrap();
-    assert!(!updated);
+        let updated = kv.set(b"key", b"value").unwrap();
+        assert!(!updated);
 
-    let value = kv.get(b"key").unwrap();
-    assert_eq!(value, Some(b"value".to_vec()));
-  }
+        let value = kv.get(b"key").unwrap();
+        assert_eq!(value, Some(b"value".to_vec()));
+    }
 
-  #[test]
-  fn can_set_update_existing_key(){
-    let mut kv = KV::open().unwrap();
+    #[test]
+    fn can_set_update_existing_key() {
+        let mut kv = KV::open().unwrap();
 
-    kv.set(b"key", b"value1").unwrap();
-    let updated = kv.set(b"key", b"value2").unwrap();
-    assert!(updated);
+        kv.set(b"key", b"value1").unwrap();
+        let updated = kv.set(b"key", b"value2").unwrap();
+        assert!(updated);
 
-    let value = kv.get(b"key").unwrap();
-    assert_eq!(value, Some(b"value2".to_vec()));
-  }
+        let value = kv.get(b"key").unwrap();
+        assert_eq!(value, Some(b"value2".to_vec()));
+    }
 
-  #[test]
-  fn can_delete_key(){
-    let mut kv = KV::open().unwrap();
-    kv.set(b"key", b"value").unwrap();
+    #[test]
+    fn can_delete_key() {
+        let mut kv = KV::open().unwrap();
+        kv.set(b"key", b"value").unwrap();
 
-    let deleted = kv.del(b"key").unwrap();
-    assert!(deleted);
+        let deleted = kv.del(b"key").unwrap();
+        assert!(deleted);
 
-    let value = kv.get(b"key").unwrap();
-    assert!(value.is_none());
-  }
+        let value = kv.get(b"key").unwrap();
+        assert!(value.is_none());
+    }
 
-  #[test]
-  fn cant_delete_missing_key(){
-    let mut kv = KV::open().unwrap();
-    
-    let deleted = kv.del(b"maybe").unwrap();
-    assert!(!deleted);
-  }
+    #[test]
+    fn cant_delete_missing_key() {
+        let mut kv = KV::open().unwrap();
+
+        let deleted = kv.del(b"maybe").unwrap();
+        assert!(!deleted);
+    }
 }
