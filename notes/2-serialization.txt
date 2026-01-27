@@ -66,3 +66,146 @@ data.extend_from_slice(&self.key);
 Почему Vec<u8>, а не &[u8]
 Entry владеет данными, а сериализация не должна зависеть от внешней памяти
 =====
+Deserialization
+Вызывающая сторона не знает, сколько байтов необходимо, это значит:
+- Decode не получает []byte
+- он читает данные постепенно, из абстрактного источника
+Источник может быть:
+- файл
+- сеть
+- буфер в памяти
+- WAL
+формат сам говорит, сколько нужно читать
+---
+Идея Decode (алгоритм)
+Формат:
+```
+| key_len (4) | val_len (4) | key | val |
+```
+Decode делает:
+1. прочитать ровно 4 байта - key_len
+2. прочитать ровно 4 байта - val_len
+3. выделить key_len байт - прочитать ключ
+4. выделить val_len байт - прочитать значение
+---
+В Rust для таких операций юзают trait Read:
+```rust
+use std::io::Read;
+```
+```rust
+pub trait Read {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+}
+```
+read() может вернуть меньше байт, чем ты ожидалось
+это нормально
+поэтому почти всегда используют read_exact()
+```rust
+reader.read_exact(&mut buf)?;
+```
+либо читает ровно сколько нужно
+либо возвращает ошибку (UnexpectedEof)
+---
+
+# 3️⃣ Структура Entry (напоминание)
+
+```rust
+pub struct Entry {
+    pub key: Vec<u8>,
+    pub val: Vec<u8>,
+}
+```
+---
+Почему R: Read
+```rust
+pub fn decode<R: Read>(reader: &mut R)
+```
+это обобщённый интерфейс
+Можно передать:
+- File
+- TcpStream
+- &[u8]
+- Cursor<Vec<u8>>
+---
+почему usize
+```rust
+let key_len = ... as usize;
+```
+- Vec::with_capacity
+- vec![0; size]
+- индексы всегда usize
+---
+если файл повреждён, read_exact вернёт ошибку:
+- UnexpectedEof
+- InvalidData
+---
+Cursor  это обёртка над байтами, которая делает из них файл/поток
+```rust
+use std::io::Cursor;
+
+let data = vec![1, 2, 3, 4];
+let mut c = Cursor::new(data);
+```
+Теперь c:
+реализует Read и  Write
+хранит позицию, как файловый курсор
+для кода это не массив, а источник данных
+Мы подсовываем Cursor, а код думает - О, поток байт, читаем
+===
+Read and Write
+В Rust это два трейта из стандартной библиотеки:
+use std::io::{Read, Write};
+```
+trait Read {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+}
+
+trait Write {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize>;
+}
+```
+---
+use std::io::{Cursor, Write};
+
+let mut buf = Cursor::new(Vec::new());
+buf.write_all(b"hello")?;
+buf.write_all(b"world")?;
+- есть позиция
+- можно читать и писать
+- идеально для тестов и WAL
+---
+Vec<u8> тоже Writer (!)
+use std::io::Write;
+
+let mut buf = Vec::new();
+buf.write_all(b"hello")?;
+---
+Rефактор c writer:
+```
+use std::io::{self, Write};
+
+impl Entry {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.encode_into(&mut buf).unwrap();
+        buf
+    }
+
+    pub fn encode_into<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        w.write_all(&(self.key.len() as u32).to_le_bytes())?;
+        w.write_all(&(self.val.len() as u32).to_le_bytes())?;
+        w.write_all(&self.key)?;
+        w.write_all(&self.val)?;
+        Ok(())
+    }
+}
+```
+encode() для тестов
+encode_into() для WAL / файлов
+один формат, один код
+===
+WAL — Write-Ahead Log
+Write-Ahead Logging - сначала записывай в лог, потом меняй данные
+Любое изменение БД сначала пишется в лог на диск, а уже потом применяется к памяти/файлам
+(На случай отключения света)
+WAL это просто поток байт и хорошо ложится на Read/Write
