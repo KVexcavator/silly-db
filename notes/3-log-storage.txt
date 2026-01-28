@@ -57,67 +57,38 @@ while let Some(entry) = log.read()? {
     // применяем запись к in-memory структурам
 }
 ```
+===
+tombstone надгробный камень
+tombstone это логическое удаление
+Обязательен потому что нельзя просто удалить ключ:
+WAL - только для добавления
+старые set всё ещё в логе при replay они воскреснут
+===
+при старте БД
+мы читаем WAL с начала до EOF
+каждую запись применяем к mem
+если ключ встречается несколько раз → последняя запись побеждает
+если запись deleted, ключ удаляется
+WAL = источник истины, mem = кэш текущего состояния
 ---
-
-## 8. Тесты (очень важно)
-
-### 8.1 Тест: записали → прочитали
-
+В Rust KeyValue должен знать, где лог:
 ```rust
-#[test]
-fn log_write_then_read() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("wal.log");
-
-    let mut log = Log::open(&path).unwrap();
-
-    let e1 = Entry {
-        key: b"a".to_vec(),
-        val: b"1".to_vec(),
-    };
-
-    let e2 = Entry {
-        key: b"b".to_vec(),
-        val: b"2".to_vec(),
-    };
-
-    log.write(&e1).unwrap();
-    log.write(&e2).unwrap();
-
-    // читаем с начала
-    log.fp.seek(std::io::SeekFrom::Start(0)).unwrap();
-
-    let r1 = log.read().unwrap().unwrap();
-    let r2 = log.read().unwrap().unwrap();
-    let r3 = log.read().unwrap();
-
-    assert_eq!(r1.key, b"a");
-    assert_eq!(r2.key, b"b");
-    assert!(r3.is_none());
+pub struct KV {
+    log: Log,
+    mem: HashMap<Vec<u8>, Vec<u8>>,
 }
 ```
-
+И open должен принимать путь:
+```rust
+pub fn open(path: impl Into<PathBuf>) -> Result<Self, KVError>
+```
 ---
-
-## 9. Почему всё это круто
-
-* `Entry` — чистая сериализация
-* `Log` — чистый IO
-* тесты:
-
-  * через `Cursor<Vec<u8>>`
-  * через реальный файл
-* один и тот же код работает:
-
-  * для WAL
-  * для snapshot
-  * для сетевого стрима
-
+Почему последняя запись побеждает работает автоматически
+```rust
+mem.insert(key, value);
+```
+Если ключ уже есть:
+старое значение перезаписывается
+именно этого требует условие
+Сначала пишем в WAL, потом меняем память
 ---
-
-## 10. Ментальная модель (очень важно запомнить)
-
-> **Entry не знает, где он живёт**
-> **Log не знает, что внутри Entry**
-> **Read / Write — контракт между ними**
-

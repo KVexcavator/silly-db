@@ -14,8 +14,25 @@ impl Entry {
             deleted: false,
         }
     }
+
+    pub fn tombstone(key: Vec<u8>) -> Self {
+        Entry {
+            key,
+            val: Vec::new(),
+            deleted: true,
+        }
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.deleted
+    }
+
     pub fn key(&self) -> &[u8] {
         &self.key
+    }
+
+    pub fn value(&self) -> &[u8] {
+        &self.val
     }
     // serialization
     // native example

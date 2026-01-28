@@ -1,20 +1,40 @@
 //! key value interface
+use crate::bs::Entry;
+use crate::ls::Log;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 pub struct KV {
+    log: Log,
     mem: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 #[derive(Debug)]
-pub struct KVError {
-    // TODO
+pub enum KVError {
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for KVError {
+    fn from(e: std::io::Error) -> Self {
+        KVError::Io(e)
+    }
 }
 
 impl KV {
-    pub fn open() -> Result<Self, KVError> {
-        Ok(Self {
-            mem: HashMap::new(),
-        })
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self, KVError> {
+        let mut log = Log::open(path)?;
+        let mut mem = HashMap::new();
+
+        // read WAL for EOF
+        while let Some(entry) = log.read()? {
+            if entry.is_deleted() {
+                mem.remove(entry.key());
+            } else {
+                mem.insert(entry.key().to_vec(), entry.value().to_vec());
+            }
+        }
+
+        Ok(KV { log, mem })
     }
 
     pub fn close(&mut self) -> Result<(), KVError> {
@@ -27,12 +47,24 @@ impl KV {
 
     pub fn set(&mut self, key: &[u8], val: &[u8]) -> Result<bool, KVError> {
         let existed = self.mem.contains_key(key);
+
+        let entry = Entry::new(key.to_vec(), val.to_vec());
+        self.log.write(&entry)?;
+
         self.mem.insert(key.to_vec(), val.to_vec());
         Ok(existed)
     }
 
     pub fn del(&mut self, key: &[u8]) -> Result<bool, KVError> {
-        Ok(self.mem.remove(key).is_some())
+        let existed = self.mem.contains_key(key);
+
+        if existed {
+            let entry = Entry::tombstone(key.to_vec());
+            self.log.write(&entry)?;
+            self.mem.remove(key);
+        }
+
+        Ok(existed)
     }
 }
 
@@ -42,20 +74,29 @@ mod tests {
 
     #[test]
     fn can_open_and_close() {
-        let mut kv = KV::open().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        let mut kv = KV::open(&path).unwrap();
         kv.close().unwrap();
     }
 
     #[test]
     fn get_missing_key() {
-        let kv = KV::open().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+        
+        let kv = KV::open(&path).unwrap();
         let value = kv.get(b"missing").unwrap();
         assert!(value.is_none());
     }
 
     #[test]
     fn can_set_and_get() {
-        let mut kv = KV::open().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+        
+        let mut kv = KV::open(&path).unwrap();
 
         let updated = kv.set(b"key", b"value").unwrap();
         assert!(!updated);
@@ -66,7 +107,10 @@ mod tests {
 
     #[test]
     fn can_set_update_existing_key() {
-        let mut kv = KV::open().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+        
+        let mut kv = KV::open(&path).unwrap();
 
         kv.set(b"key", b"value1").unwrap();
         let updated = kv.set(b"key", b"value2").unwrap();
@@ -78,7 +122,11 @@ mod tests {
 
     #[test]
     fn can_delete_key() {
-        let mut kv = KV::open().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+        
+        let mut kv = KV::open(&path).unwrap();
+
         kv.set(b"key", b"value").unwrap();
 
         let deleted = kv.del(b"key").unwrap();
@@ -90,9 +138,32 @@ mod tests {
 
     #[test]
     fn cant_delete_missing_key() {
-        let mut kv = KV::open().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+        
+        let mut kv = KV::open(&path).unwrap();
 
         let deleted = kv.del(b"maybe").unwrap();
         assert!(!deleted);
+    }
+
+    #[test]
+    fn replay_log_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        {
+            let mut kv = KV::open(&path).unwrap();
+            kv.set(b"a", b"1").unwrap();
+            kv.set(b"a", b"2").unwrap();
+            kv.del(b"a").unwrap();
+            kv.set(b"b", b"3").unwrap();
+        }
+
+        // rerun
+        let kv = KV::open(&path).unwrap();
+
+        assert!(kv.get(b"a").unwrap().is_none());
+        assert_eq!(kv.get(b"b").unwrap(), Some(b"3".to_vec()));
     }
 }
