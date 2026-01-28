@@ -3,9 +3,20 @@ use std::io::{self, Read, Write};
 pub struct Entry {
     key: Vec<u8>,
     val: Vec<u8>,
+    deleted: bool,
 }
 
 impl Entry {
+    pub fn new(key: Vec<u8>, val: Vec<u8>) -> Self {
+        Entry {
+            key,
+            val,
+            deleted: false,
+        }
+    }
+    pub fn key(&self) -> &[u8] {
+        &self.key
+    }
     // serialization
     // native example
     // pub fn encode(&self) -> Vec<u8> {
@@ -37,6 +48,7 @@ impl Entry {
     pub fn encode_into<W: Write>(&self, w: &mut W) -> io::Result<()> {
         w.write_all(&(self.key.len() as u32).to_le_bytes())?;
         w.write_all(&(self.val.len() as u32).to_le_bytes())?;
+        w.write_all(&[self.deleted as u8])?;
         w.write_all(&self.key)?;
         w.write_all(&self.val)?;
         Ok(())
@@ -51,6 +63,10 @@ impl Entry {
         // read value length
         reader.read_exact(&mut len_buf)?;
         let val_len = u32::from_le_bytes(len_buf) as usize;
+        // deleted flag
+        let mut flag = [0u8; 1];
+        reader.read_exact(&mut flag)?;
+        let deleted = flag[0] != 0;
         // read key
         let mut key = vec![0u8; key_len];
         reader.read_exact(&mut key)?;
@@ -58,7 +74,7 @@ impl Entry {
         let mut val = vec![0u8; val_len];
         reader.read_exact(&mut val)?;
 
-        Ok(Entry { key, val })
+        Ok(Entry { key, val, deleted })
     }
 }
 
@@ -71,11 +87,12 @@ mod tests {
         let ent = Entry {
             key: b"a".to_vec(),
             val: b"bb".to_vec(),
+            deleted: false,
         };
 
         let encoded = ent.encode();
 
-        assert_eq!(encoded, vec![1, 0, 0, 0, 2, 0, 0, 0, b'a', b'b', b'b',]);
+        assert_eq!(encoded, vec![1, 0, 0, 0, 2, 0, 0, 0, 0, b'a', b'b', b'b',]);
     }
 
     #[test]
@@ -83,6 +100,7 @@ mod tests {
         let entry = Entry {
             key: b"barbambia".to_vec(),
             val: b"kergudu".to_vec(),
+            deleted: false,
         };
 
         let data = entry.encode();
@@ -92,6 +110,7 @@ mod tests {
 
         assert_eq!(decoded.key, b"barbambia");
         assert_eq!(decoded.val, b"kergudu");
+        assert!(!decoded.deleted);
     }
 
     #[test]
@@ -99,6 +118,7 @@ mod tests {
         let entry = Entry {
             key: b"barbambia".to_vec(),
             val: b"kergudu".to_vec(),
+            deleted: false,
         };
 
         let mut buf = std::io::Cursor::new(Vec::new());
@@ -110,5 +130,23 @@ mod tests {
 
         assert_eq!(decoded.key, b"barbambia");
         assert_eq!(decoded.val, b"kergudu");
+        assert!(!decoded.deleted);
+    }
+
+    #[test]
+    fn encode_then_decode_delete() {
+        let entry = Entry {
+            key: b"to-delete".to_vec(),
+            val: Vec::new(),
+            deleted: true,
+        };
+
+        let data = entry.encode();
+        let mut cursor = std::io::Cursor::new(data);
+        let decoded = Entry::decode(&mut cursor).unwrap();
+
+        assert_eq!(decoded.key, b"to-delete");
+        assert!(decoded.val.is_empty());
+        assert!(decoded.deleted);
     }
 }
