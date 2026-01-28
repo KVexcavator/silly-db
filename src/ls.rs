@@ -1,4 +1,4 @@
-// Lod Storage
+// Log Storage
 use crate::bs::Entry;
 use std::fs::OpenOptions;
 use std::io::{self, Seek, SeekFrom};

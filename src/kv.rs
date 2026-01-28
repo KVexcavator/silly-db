@@ -166,4 +166,33 @@ mod tests {
         assert!(kv.get(b"a").unwrap().is_none());
         assert_eq!(kv.get(b"b").unwrap(), Some(b"3".to_vec()));
     }
+
+    #[test]
+    fn overwrite_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        {
+            let mut kv = KV::open(&path).unwrap();
+            kv.set(b"x", b"1").unwrap();
+            kv.set(b"x", b"2").unwrap();
+        }
+
+        let kv = KV::open(&path).unwrap();
+        assert_eq!(kv.get(b"x").unwrap(), Some(b"2".to_vec()));
+    }
+
+    #[test]
+    fn delete_missing_does_not_affect_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        {
+            let mut kv = KV::open(&path).unwrap();
+            assert!(!kv.del(b"nope").unwrap());
+        }
+
+        let kv = KV::open(&path).unwrap();
+        assert!(kv.get(b"nope").unwrap().is_none());
+    }
 }
