@@ -1,10 +1,11 @@
 // Log Storage
 use crate::bs::Entry;
-use std::fs::OpenOptions;
+use crate::fsync::create_file_sync;
 use std::io::{self, Seek, SeekFrom};
 use std::path::PathBuf;
 
 pub struct Log {
+    #[allow(unused)]
     filename: PathBuf,
     fileptr: std::fs::File,
 }
@@ -12,11 +13,7 @@ pub struct Log {
 impl Log {
     pub fn open(filename: impl Into<PathBuf>) -> io::Result<Self> {
         let filename = filename.into();
-        let fileptr = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&filename)?;
+        let fileptr = create_file_sync(&filename)?;
 
         Ok(Log { filename, fileptr })
     }
@@ -28,6 +25,7 @@ impl Log {
     pub fn write(&mut self, entry: &Entry) -> io::Result<()> {
         self.fileptr.seek(SeekFrom::End(0))?;
         entry.encode_into(&mut self.fileptr)?;
+        self.fileptr.sync_all()?;
         Ok(())
     }
 
