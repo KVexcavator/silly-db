@@ -33,6 +33,7 @@ impl Log {
         match Entry::decode(&mut self.fileptr) {
             Ok(entry) => Ok(Some(entry)),
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
+            Err(e) if e.kind() == io::ErrorKind::InvalidData => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -67,4 +68,30 @@ mod tests {
         assert_eq!(r2.key(), b"b");
         assert!(r3.is_none());
     }
+
+    #[test]
+    fn ignore_partial_entry() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wal.log");
+
+        let mut log = Log::open(&path).unwrap();
+
+        let e1 = Entry::new(b"a".to_vec(), b"1".to_vec());
+        log.write(&e1).unwrap();
+
+        // add trash
+        log.fileptr.write_all(&[1, 2, 3, 4]).unwrap();
+        log.fileptr.sync_all().unwrap();
+
+        log.fileptr.seek(std::io::SeekFrom::Start(0)).unwrap();
+
+        let r1 = log.read().unwrap().unwrap();
+        let r2 = log.read().unwrap();
+
+        assert_eq!(r1.key(), b"a");
+        assert!(r2.is_none());
+    }
+
 }

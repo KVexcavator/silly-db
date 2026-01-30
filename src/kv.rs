@@ -195,4 +195,27 @@ mod tests {
         let kv = KV::open(&path).unwrap();
         assert!(kv.get(b"nope").unwrap().is_none());
     }
+
+    #[test]
+    fn kv_recovers_from_partial_wal() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        {
+            let mut kv = KV::open(&path).unwrap();
+            kv.set(b"a", b"1").unwrap();
+        }
+
+        // ruining WAL
+        {
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(&[9, 9, 9]).unwrap();
+            f.sync_all().unwrap();
+        }
+
+        let kv = KV::open(&path).unwrap();
+        assert_eq!(kv.get(b"a").unwrap(), Some(b"1".to_vec()));
+    }
 }

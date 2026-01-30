@@ -1,10 +1,12 @@
 //! Binary Serialization
 use std::io::{self, Read, Write};
+use crc32fast::Hasher;
 pub struct Entry {
     key: Vec<u8>,
     val: Vec<u8>,
     deleted: bool,
 }
+
 
 impl Entry {
     pub fn new(key: Vec<u8>, val: Vec<u8>) -> Self {
@@ -63,33 +65,54 @@ impl Entry {
 
     // writer data like file, WAL ...
     pub fn encode_into<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        w.write_all(&(self.key.len() as u32).to_le_bytes())?;
-        w.write_all(&(self.val.len() as u32).to_le_bytes())?;
-        w.write_all(&[self.deleted as u8])?;
-        w.write_all(&self.key)?;
-        w.write_all(&self.val)?;
+        let mut payload = Vec::new();
+
+        payload.extend_from_slice(&(self.key.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&(self.val.len() as u32).to_le_bytes());
+        payload.push(self.deleted as u8);
+        payload.extend_from_slice(&self.key);
+        payload.extend_from_slice(&self.val);
+
+        let mut hasher = Hasher::new();
+        hasher.update(&payload);
+        let crc = hasher.finalize();
+
+        w.write_all(&crc.to_le_bytes())?;
+        w.write_all(&payload)?;
+
         Ok(())
     }
 
     // deserialization
-    pub fn decode<R: Read>(reader: &mut R) -> io::Result<Self> {
-        // read key length
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf)?;
-        let key_len = u32::from_le_bytes(len_buf) as usize;
-        // read value length
-        reader.read_exact(&mut len_buf)?;
-        let val_len = u32::from_le_bytes(len_buf) as usize;
-        // deleted flag
-        let mut flag = [0u8; 1];
-        reader.read_exact(&mut flag)?;
-        let deleted = flag[0] != 0;
-        // read key
+    pub fn decode<R: Read>(r: &mut R) -> io::Result<Self> {
+        use std::io::{Error, ErrorKind};
+
+        let mut crc_buf = [0u8; 4];
+        r.read_exact(&mut crc_buf)?;
+        let expected_crc = u32::from_le_bytes(crc_buf);
+
+        let mut header = [0u8; 9]; // key_len(4) + val_len(4) + deleted(1)
+        r.read_exact(&mut header)?;
+
+        let key_len = u32::from_le_bytes(header[0..4].try_into().unwrap()) as usize;
+        let val_len = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+        let deleted = header[8] != 0;
+
         let mut key = vec![0u8; key_len];
-        reader.read_exact(&mut key)?;
-        // read value
         let mut val = vec![0u8; val_len];
-        reader.read_exact(&mut val)?;
+
+        r.read_exact(&mut key)?;
+        r.read_exact(&mut val)?;
+
+        let mut hasher = Hasher::new();
+        hasher.update(&header);
+        hasher.update(&key);
+        hasher.update(&val);
+        let actual_crc = hasher.finalize();
+
+        if actual_crc != expected_crc {
+            return Err(Error::new(ErrorKind::InvalidData, "bad checksum"));
+        }
 
         Ok(Entry { key, val, deleted })
     }
@@ -109,7 +132,7 @@ mod tests {
 
         let encoded = ent.encode();
 
-        assert_eq!(encoded, vec![1, 0, 0, 0, 2, 0, 0, 0, 0, b'a', b'b', b'b',]);
+        assert_eq!(encoded, vec![59, 37, 55, 31, 1, 0, 0, 0, 2, 0, 0, 0, 0, 97, 98, 98]);
     }
 
     #[test]
