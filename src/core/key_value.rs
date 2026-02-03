@@ -1,6 +1,6 @@
 //! key value interface
-use crate::bs::Entry;
-use crate::ls::Log;
+use crate::core::binary_serializer::Entry;
+use crate::core::log_storage::Log;
 use std::collections::HashMap;
 use std::path::PathBuf;
 

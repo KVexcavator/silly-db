@@ -1,4 +1,2 @@
-pub mod bs;
-pub mod kv;
-pub mod ls;
-pub mod fsync;
+pub mod core;
+pub mod model;

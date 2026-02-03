@@ -1,6 +1,6 @@
 // Log Storage
-use crate::bs::Entry;
-use crate::fsync::create_file_sync;
+use crate::core::binary_serializer::Entry;
+use crate::core::fsync::create_file_sync;
 use std::io::{self, Seek, SeekFrom};
 use std::path::PathBuf;
 
