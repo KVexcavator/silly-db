@@ -1,7 +1,7 @@
 use std::convert::TryInto;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Cell {
+pub enum CellType {
     I64(i64),
     Str(Vec<u8>),
 }
@@ -15,14 +15,14 @@ pub enum DecodeError {
     UnknownType(u8),
 }
 
-impl Cell {
-    pub fn encode_into(&self, out: &mut Vec<u8>) {
+impl CellType {
+    pub fn encode(&self, out: &mut Vec<u8>) {
         match self {
-            Cell::I64(v) => {
+            CellType::I64(v) => {
                 out.push(TYPE_I64);
                 out.extend_from_slice(&v.to_le_bytes());
             }
-            Cell::Str(s) => {
+            CellType::Str(s) => {
                 out.push(TYPE_STR);
                 out.extend_from_slice(&(s.len() as u32).to_le_bytes());
                 out.extend_from_slice(s);
@@ -30,7 +30,7 @@ impl Cell {
         }
     }
 
-    pub fn decode(mut data: &[u8]) -> Result<(Cell, &[u8]), DecodeError> {
+    pub fn decode(mut data: &[u8]) -> Result<(CellType, &[u8]), DecodeError> {
         if data.len() < 1 {
             return Err(DecodeError::UnexpectedEOF);
         }
@@ -44,7 +44,7 @@ impl Cell {
                     return Err(DecodeError::UnexpectedEOF);
                 }
                 let v = i64::from_le_bytes(data[..8].try_into().unwrap());
-                Ok((Cell::I64(v), &data[8..]))
+                Ok((CellType::I64(v), &data[8..]))
             }
 
             TYPE_STR => {
@@ -60,11 +60,19 @@ impl Cell {
                 }
 
                 let s = data[..len].to_vec();
-                Ok((Cell::Str(s), &data[len..]))
+                Ok((CellType::Str(s), &data[len..]))
             }
 
             other => Err(DecodeError::UnknownType(other)),
         }
+    }
+
+    pub fn same_type(&self, other: &CellType) -> bool {
+        matches!(
+            (self, other),
+            (CellType::I64(_), CellType::I64(_))
+                | (CellType::Str(_), CellType::Str(_))
+        )
     }
 }
 
@@ -74,24 +82,24 @@ mod tests {
 
     #[test]
     fn encode_decode_i64() {
-        let cell = Cell::I64(-123456789);
+        let cell = CellType::I64(-123456789);
         let mut buf = Vec::new();
 
-        cell.encode_into(&mut buf);
+        cell.encode(&mut buf);
 
-        let (decoded, rest) = Cell::decode(&buf).unwrap();
+        let (decoded, rest) = CellType::decode(&buf).unwrap();
         assert_eq!(decoded, cell);
         assert!(rest.is_empty());
     }
 
     #[test]
     fn encode_decode_str() {
-        let cell = Cell::Str(b"hello world".to_vec());
+        let cell = CellType::Str(b"hello world".to_vec());
         let mut buf = Vec::new();
 
-        cell.encode_into(&mut buf);
+        cell.encode(&mut buf);
 
-        let (decoded, rest) = Cell::decode(&buf).unwrap();
+        let (decoded, rest) = CellType::decode(&buf).unwrap();
         assert_eq!(decoded, cell);
         assert!(rest.is_empty());
     }
@@ -99,19 +107,19 @@ mod tests {
     #[test]
     fn encode_multiple_cells() {
         let cells = vec![
-            Cell::I64(42),
-            Cell::Str(b"abc".to_vec()),
-            Cell::I64(-1),
+            CellType::I64(42),
+            CellType::Str(b"abc".to_vec()),
+            CellType::I64(-1),
         ];
 
         let mut buf = Vec::new();
         for c in &cells {
-            c.encode_into(&mut buf);
+            c.encode(&mut buf);
         }
 
         let mut data = buf.as_slice();
         for expected in cells {
-            let (cell, rest) = Cell::decode(data).unwrap();
+            let (cell, rest) = CellType::decode(data).unwrap();
             assert_eq!(cell, expected);
             data = rest;
         }

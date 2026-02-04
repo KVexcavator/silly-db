@@ -1,4 +1,5 @@
 /target
 .qodo
 .vscode
+secret.txt
 Cargo.lock
