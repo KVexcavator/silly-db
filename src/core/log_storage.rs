@@ -93,5 +93,4 @@ mod tests {
         assert_eq!(r1.key(), b"a");
         assert!(r2.is_none());
     }
-
 }

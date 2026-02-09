@@ -1,9 +1,9 @@
 //! fsync
+use libc::{O_DIRECTORY, O_RDONLY, close, fsync, open};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use libc::{open, fsync, close, O_DIRECTORY, O_RDONLY};
 
 fn sync_dir(path: &Path) -> io::Result<()> {
     let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();

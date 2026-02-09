@@ -30,11 +30,7 @@ impl Row {
         key
     }
 
-    pub fn decode_key(
-        &mut self,
-        schema: &Schema,
-        mut key: &[u8],
-    ) -> Result<(), DecodeError> {
+    pub fn decode_key(&mut self, schema: &Schema, mut key: &[u8]) -> Result<(), DecodeError> {
         let prefix_len = schema.table.len() + 1;
         key = &key[prefix_len..];
 
@@ -71,11 +67,7 @@ impl Row {
         val
     }
 
-    pub fn decode_val(
-        &mut self,
-        schema: &Schema,
-        mut val: &[u8],
-    ) -> Result<(), DecodeError> {
+    pub fn decode_val(&mut self, schema: &Schema, mut val: &[u8]) -> Result<(), DecodeError> {
         for (idx, col) in schema.cols.iter().enumerate() {
             if schema.pkey.contains(&idx) {
                 continue;
@@ -106,9 +98,18 @@ mod tests {
         Schema {
             table: "link".into(),
             cols: vec![
-                Column { name: "time".into(), data_types: CellType::I64(0) },
-                Column { name: "src".into(), data_types: CellType::Str(vec![]) },
-                Column { name: "dst".into(), data_types: CellType::Str(vec![]) },
+                Column {
+                    name: "time".into(),
+                    data_types: CellType::I64(0),
+                },
+                Column {
+                    name: "src".into(),
+                    data_types: CellType::Str(vec![]),
+                },
+                Column {
+                    name: "dst".into(),
+                    data_types: CellType::Str(vec![]),
+                },
             ],
             pkey: vec![1, 2],
         }

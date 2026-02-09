@@ -46,8 +46,13 @@ impl KV {
         Ok(self.mem.get(key).cloned())
     }
 
-    pub fn set_if_existed(&mut self, key: &[u8], val: &[u8], mode: UpdateMode) -> Result<bool, KVError> {
-        let  existed = self.mem.contains_key(key);
+    pub fn set_if_existed(
+        &mut self,
+        key: &[u8],
+        val: &[u8],
+        mode: UpdateMode,
+    ) -> Result<bool, KVError> {
+        let existed = self.mem.contains_key(key);
 
         let should_write = match mode {
             UpdateMode::Upsert => true,
@@ -56,7 +61,7 @@ impl KV {
         };
 
         if !should_write {
-            return  Ok(false);
+            return Ok(false);
         }
 
         let entry = Entry::new(key.to_vec(), val.to_vec());
@@ -101,7 +106,7 @@ mod tests {
     fn get_missing_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("db.log");
-        
+
         let kv = KV::open(&path).unwrap();
         let value = kv.get(b"missing").unwrap();
         assert!(value.is_none());
@@ -111,7 +116,7 @@ mod tests {
     fn can_set_and_get() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("db.log");
-        
+
         let mut kv = KV::open(&path).unwrap();
 
         let updated = kv.set(b"key", b"value").unwrap();
@@ -125,7 +130,7 @@ mod tests {
     fn can_delete_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("db.log");
-        
+
         let mut kv = KV::open(&path).unwrap();
 
         kv.set(b"key", b"value").unwrap();
@@ -141,7 +146,7 @@ mod tests {
     fn cant_delete_missing_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("db.log");
-        
+
         let mut kv = KV::open(&path).unwrap();
 
         let deleted = kv.del(b"maybe").unwrap();
@@ -196,7 +201,10 @@ mod tests {
 
         // ruining WAL
         {
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             f.write_all(&[9, 9, 9]).unwrap();
             f.sync_all().unwrap();
         }
@@ -206,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_mode_does_not_overwrite(){
+    fn insert_mode_does_not_overwrite() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("db.log");
 

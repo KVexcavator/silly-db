@@ -1,0 +1,72 @@
+Добавление API для операций CRUD
+На этом шаге реализуем операции CRUD (создание, чтение, обновление, удаление) на основе первичного ключа, а также сопоставление с операциями вставки, выбора, обновления и удаления
+
+DB = тонкий слой: Schema + Row -> KV
+```rust
+pub struct  DB {
+    pub kv: KV,
+}
+...
+impl DB {
+    pub fn open(path: impl Into<std::path::PathBuf>) -> Result<Self, DBError> {
+        Ok(DB { kv: KV::open(path)? })
+    }
+
+    pub fn close(&mut self) -> Result<(), DBError> {
+        self.kv.close()?;
+        Ok(())
+    }...
+```
+Используем ключевое слово get, set, del для реализации:
+```go
+pub fn select( &self, schema: &Schema, row: &mut Row ) -> Result<bool, DBError>
+* row содержит первичный ключ
+* после вызова, row полностью заполнен
+pub fn insert(&mut self, schema: &Schema, row: &Row) -> Result<bool, DBError>
+pub fn upsert(&mut self, schema: &Schema, row: &Row) -> Result<bool, DBError>
+pub fn update(&mut self, schema: &Schema, row: &Row) -> Result<bool, DBError>
+pub fn delete(&mut self, schema: &Schema, row: &Row) -> Result<bool, DBError>
+```
+Требования:
+- select, delete: строка ввода содержит первичный ключ
+- insert, upsert, update: строка ввода заполнена
+---
+select принимает строку длиной 2, но возвращает только значение, например:
+```
+create table t (a int64, b int64, primary key(b))
+```
+Хранение:
+```
+key = table|b
+value = a
+```
+При Select:
+- пользователь передаёт row {a=?, b=10}
+- реально используется только b
+- после чтения KV -> a восстанавливается
+То есть:
+```
+row (input) -> encode_key
+KV.get
+decode_val -> row (output)
+```
+---
+Основные особенности реляционных баз данных
+Помимо доступа к одной строке по первичному ключу, на последующих этапах могут быть добавлены:
+- Полное сканирование таблицы
+- Запрос по индексу
+- Запрос диапазона по индексу или первичному ключу
+- Фильтрация результатов запроса
+---
+Архитектурно есть слои:
+```
+CellType
+Row encode/decode
+Schema
+----------------
+DB (relational)
+----------------
+KV
+WAL
+```
+теперь построена минимальная реляционная БД

@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum  UpdateMode {
+pub enum UpdateMode {
     Upsert,
     Insert,
     Update,

@@ -51,8 +51,7 @@ impl CellType {
                 if data.len() < 4 {
                     return Err(DecodeError::UnexpectedEOF);
                 }
-                let len =
-                    u32::from_le_bytes(data[..4].try_into().unwrap()) as usize;
+                let len = u32::from_le_bytes(data[..4].try_into().unwrap()) as usize;
                 data = &data[4..];
 
                 if data.len() < len {
@@ -70,8 +69,7 @@ impl CellType {
     pub fn same_type(&self, other: &CellType) -> bool {
         matches!(
             (self, other),
-            (CellType::I64(_), CellType::I64(_))
-                | (CellType::Str(_), CellType::Str(_))
+            (CellType::I64(_), CellType::I64(_)) | (CellType::Str(_), CellType::Str(_))
         )
     }
 }

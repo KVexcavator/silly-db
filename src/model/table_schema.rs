@@ -17,12 +17,14 @@ pub struct Column {
 impl Schema {
     pub fn new_row(&self) -> Row {
         Row {
-            cells: self.cols.iter().map(|col| match col.data_types {
-                CellType::I64(_) => CellType::I64(0),
-                CellType::Str(_) => CellType::Str(Vec::new()),
-            }).collect(),
+            cells: self
+                .cols
+                .iter()
+                .map(|col| match col.data_types {
+                    CellType::I64(_) => CellType::I64(0),
+                    CellType::Str(_) => CellType::Str(Vec::new()),
+                })
+                .collect(),
         }
     }
 }
-
-

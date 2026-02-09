@@ -1,12 +1,11 @@
 //! Binary Serialization
-use std::io::{self, Read, Write};
 use crc32fast::Hasher;
+use std::io::{self, Read, Write};
 pub struct Entry {
     key: Vec<u8>,
     val: Vec<u8>,
     deleted: bool,
 }
-
 
 impl Entry {
     pub fn new(key: Vec<u8>, val: Vec<u8>) -> Self {
@@ -132,7 +131,10 @@ mod tests {
 
         let encoded = ent.encode();
 
-        assert_eq!(encoded, vec![59, 37, 55, 31, 1, 0, 0, 0, 2, 0, 0, 0, 0, 97, 98, 98]);
+        assert_eq!(
+            encoded,
+            vec![59, 37, 55, 31, 1, 0, 0, 0, 2, 0, 0, 0, 0, 97, 98, 98]
+        );
     }
 
     #[test]
