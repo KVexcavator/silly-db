@@ -1,0 +1,31 @@
+Можно теперь сопоставлять операции SQL с key-value. Например, select -> get, delete -> del.
+Однако операция с key-value кажется одновременно и вставкой, и обновлением
+
+
+Добавить поведение вставки и обновления к ключу key-value. В Rust enum:
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateMode {
+    Upsert, // insert or update
+    Insert, // only if not exists
+    Update, // only if exists
+}
+```
+* Copy- чтобы можно было передавать без move
+
+Добавить set_if_existed():
+```src/core/key_value.rs
+pub fn set_if_existed(
+    &mut self,
+    key: &[u8],
+    val: &[u8],
+    mode: UpdateMode,
+) -> Result<bool, KVError> {...}
+```
+Требования:
+- Режим Insert: если ключ уже существует, не обновлять и возвращать false
+- Режим Update: обновлять только существующие ключи
+- Режим Upsert: если ключ существует, вставка или перезапись
+В Rust нельзя писать в WAL, если операция не прошла. Сначала проверяем условия, потом пишем.
+
+Переделываем старый set() для KV, теперь он thin wrapper

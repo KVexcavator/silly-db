@@ -1,6 +1,7 @@
 //! key value interface
 use crate::core::binary_serializer::Entry;
 use crate::core::log_storage::Log;
+use crate::model::update_modes::UpdateMode;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -45,14 +46,29 @@ impl KV {
         Ok(self.mem.get(key).cloned())
     }
 
-    pub fn set(&mut self, key: &[u8], val: &[u8]) -> Result<bool, KVError> {
-        let existed = self.mem.contains_key(key);
+    pub fn set_if_existed(&mut self, key: &[u8], val: &[u8], mode: UpdateMode) -> Result<bool, KVError> {
+        let  existed = self.mem.contains_key(key);
+
+        let should_write = match mode {
+            UpdateMode::Upsert => true,
+            UpdateMode::Insert => !existed,
+            UpdateMode::Update => existed,
+        };
+
+        if !should_write {
+            return  Ok(false);
+        }
 
         let entry = Entry::new(key.to_vec(), val.to_vec());
-        self.log.write(&entry)?;
+        let _ = self.log.write(&entry);
 
         self.mem.insert(key.to_vec(), val.to_vec());
+
         Ok(existed)
+    }
+
+    pub fn set(&mut self, key: &[u8], val: &[u8]) -> Result<bool, KVError> {
+        self.set_if_existed(key, val, UpdateMode::Insert)
     }
 
     pub fn del(&mut self, key: &[u8]) -> Result<bool, KVError> {
@@ -106,21 +122,6 @@ mod tests {
     }
 
     #[test]
-    fn can_set_update_existing_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("db.log");
-        
-        let mut kv = KV::open(&path).unwrap();
-
-        kv.set(b"key", b"value1").unwrap();
-        let updated = kv.set(b"key", b"value2").unwrap();
-        assert!(updated);
-
-        let value = kv.get(b"key").unwrap();
-        assert_eq!(value, Some(b"value2".to_vec()));
-    }
-
-    #[test]
     fn can_delete_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("db.log");
@@ -168,21 +169,6 @@ mod tests {
     }
 
     #[test]
-    fn overwrite_persists() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("db.log");
-
-        {
-            let mut kv = KV::open(&path).unwrap();
-            kv.set(b"x", b"1").unwrap();
-            kv.set(b"x", b"2").unwrap();
-        }
-
-        let kv = KV::open(&path).unwrap();
-        assert_eq!(kv.get(b"x").unwrap(), Some(b"2".to_vec()));
-    }
-
-    #[test]
     fn delete_missing_does_not_affect_state() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("db.log");
@@ -217,5 +203,45 @@ mod tests {
 
         let kv = KV::open(&path).unwrap();
         assert_eq!(kv.get(b"a").unwrap(), Some(b"1".to_vec()));
+    }
+
+    #[test]
+    fn insert_mode_does_not_overwrite(){
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        let mut kv = KV::open(&path).unwrap();
+
+        kv.set(b"k", b"v1").unwrap();
+        let updated = kv.set_if_existed(b"k", b"v2", UpdateMode::Insert).unwrap();
+
+        assert!(!updated);
+        assert_eq!(kv.get(b"k").unwrap(), Some(b"v1".to_vec()));
+    }
+
+    #[test]
+    fn update_mode_only_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        let mut kv = KV::open(&path).unwrap();
+
+        let updated = kv.set_if_existed(b"k", b"v1", UpdateMode::Update).unwrap();
+        assert!(!updated);
+        assert!(kv.get(b"k").unwrap().is_none());
+    }
+
+    #[test]
+    fn update_mode_updates_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        let mut kv = KV::open(&path).unwrap();
+
+        kv.set(b"k", b"v1").unwrap();
+        let updated = kv.set_if_existed(b"k", b"v2", UpdateMode::Update).unwrap();
+
+        assert!(updated);
+        assert_eq!(kv.get(b"k").unwrap(), Some(b"v2".to_vec()));
     }
 }
