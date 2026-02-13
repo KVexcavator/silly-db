@@ -1,6 +1,5 @@
-
 pub fn is_space(ch: u8) -> bool {
-  matches!(ch, b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | b' ')
+    matches!(ch, b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | b' ')
 }
 
 pub fn is_alpha(ch: u8) -> bool {

@@ -88,5 +88,42 @@ Parser
 ```
 select a from t
 ```
+====
+```rust
+matches!(ch, b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' | b' ')
+```
+Проверяет:
+ch — это какой-то whitespace-байт?
+---
+| Запись    | Что это              |
+| --------- | -------------------- |
+| `b' '`    | пробел (space)       |
+| `b'\t'`   | таб (tab)            |
+| `b'\n'`   | перевод строки (LF)  |
+| `b'\r'`   | возврат каретки (CR) |
+| `b'\x0B'` | vertical tab         |
+| `b'\x0C'` | form feed            |
+*ASCII-пробельные символы
+
+b'X' это байтовый литерал (u8), а не char
+Пример:
+```rust
+let ch: u8 = b' ';
+```
+
+matches! проверяет
+```rust
+ch == b'\t'
+|| ch == b'\n'
+|| ch == b'\x0B'
+|| ch == b'\x0C'
+|| ch == b'\r'
+|| ch == b' '
+```
+Возвращает bool
+Аналог:
+```rust
+ch.is_ascii_whitespace()
+```
 
 

@@ -1,47 +1,51 @@
-use crate::sql::utils::{
-  is_name_continue, 
-  is_name_start, 
-  is_space,
-  is_separator,
-};
+use crate::model::data_types::CellType;
+use crate::sql::utils::{is_digit, is_name_continue, is_name_start, is_separator, is_space};
 
-pub struct  Parser<'a> {
-  buffer: &'a [u8],
-  position: usize,
+pub struct Parser<'a> {
+    buffer: &'a [u8],
+    position: usize,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ParserError {
+    ExpectValue,
+    InvalidInt,
+    UnterminatedString,
+    InvalidEscape,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(s: &'a str) -> Self {
-      Parser { 
-        buffer: s.as_bytes(), 
-        position: 0, 
-      }
+        Parser {
+            buffer: s.as_bytes(),
+            position: 0,
+        }
     }
 
     pub fn try_name(&mut self) -> Option<String> {
-      self.skip_spaces();
+        self.skip_spaces();
 
-      let start = self.position;
+        let start = self.position;
 
-      let Some(ch) = self.peek() else {
-        return  None;
-      };
+        let Some(ch) = self.peek() else {
+            return None;
+        };
 
-      if !is_name_start(ch) {
-        return  None;
-      }
+        if !is_name_start(ch) {
+            return None;
+        }
 
-      self.position += 1;
+        self.position += 1;
 
-      while  let Some(ch)  = self.peek() {
-          if !is_name_continue(ch) {
-            break;
-          }
-          self.position += 1;
-      }
+        while let Some(ch) = self.peek() {
+            if !is_name_continue(ch) {
+                break;
+            }
+            self.position += 1;
+        }
 
-      let s = std::str::from_utf8(&self.buffer[start..self.position]).unwrap();
-      Some(s.to_string())
+        let s = std::str::from_utf8(&self.buffer[start..self.position]).unwrap();
+        Some(s.to_string())
     }
 
     pub fn try_keyword(&mut self, kw: &str) -> bool {
@@ -77,25 +81,108 @@ impl<'a> Parser<'a> {
         true
     }
 
+    pub fn parse_value(&mut self) -> Result<CellType, ParserError> {
+        self.skip_spaces();
+
+        let ch = self.peek().ok_or(ParserError::ExpectValue)?;
+
+        if ch == b'\'' || ch == b'"' {
+            self.parse_string()
+        } else if ch == b'+' || ch == b'-' || is_digit(ch) {
+            self.parse_int()
+        } else {
+            Err(ParserError::ExpectValue)
+        }
+    }
+
+    fn parse_int(&mut self) -> Result<CellType, ParserError> {
+        self.skip_spaces();
+        let start = self.position;
+
+        if let Some(ch) = self.peek() {
+            if ch == b'+' || ch == b'-' {
+                self.position += 1;
+            }
+        }
+
+        let digit_start = self.position;
+
+        while let Some(ch) = self.peek() {
+            if !is_digit(ch) {
+                break;
+            }
+            self.position += 1;
+        }
+
+        if self.position == digit_start {
+            self.position = start;
+            return Err(ParserError::InvalidInt);
+        }
+
+        let s = std::str::from_utf8(&self.buffer[start..self.position]).unwrap();
+
+        let value = s.parse::<i64>().map_err(|_| {
+            self.position = start;
+            ParserError::InvalidInt
+        })?;
+
+        Ok(CellType::I64(value))
+    }
+
+    fn parse_string(&mut self) -> Result<CellType, ParserError> {
+        self.skip_spaces();
+        let quote = self.peek().ok_or(ParserError::UnterminatedString)?;
+
+        if quote != b'\'' && quote != b'"' {
+            return Err(ParserError::UnterminatedString);
+        }
+
+        self.position +=1;
+
+        let mut outer = Vec::new();
+
+        while let Some(ch) = self.peek() {
+            self.position += 1;
+
+            if ch == quote {
+                return Ok(CellType::Str(outer));
+            }
+
+            if ch == b'\\' {
+                let escape = self.peek().ok_or(ParserError::InvalidEscape)?;
+                self.position += 1;
+
+                match escape {
+                    b'\\' => outer.push(b'\\'),
+                    b'\'' => outer.push(b'\''),
+                    b'"' => outer.push(b'"'),
+                    _ => return Err(ParserError::InvalidEscape),
+                }
+            } else {
+                outer.push(ch);
+            }
+        }
+        Err(ParserError::UnterminatedString)
+    }
+
     #[allow(unused)]
     fn eof(&self) -> bool {
-      self.position >= self.buffer.len()
+        self.position >= self.buffer.len()
     }
 
     fn peek(&self) -> Option<u8> {
-      self.buffer.get(self.position).copied()
+        self.buffer.get(self.position).copied()
     }
 
     fn skip_spaces(&mut self) {
-      while  let Some(ch) = self.peek() {
-          if !is_space(ch) {
-            break;
-          }
-          self.position += 1;
-      }
+        while let Some(ch) = self.peek() {
+            if !is_space(ch) {
+                break;
+            }
+            self.position += 1;
+        }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -140,5 +227,53 @@ mod tests {
         let mut p = Parser::new("select a");
         assert!(p.try_keyword("select"));
         assert_eq!(p.position, 6);
+    }
+
+    #[test]
+    fn parse_int_simple() {
+        let mut p = Parser::new("123");
+        let v = p.parse_value().unwrap();
+        assert_eq!(v, CellType::I64(123));
+    }
+
+    #[test]
+    fn parse_int_negative() {
+        let mut p = Parser::new("-42");
+        let v = p.parse_value().unwrap();
+        assert_eq!(v, CellType::I64(-42));
+    }
+
+    #[test]
+    fn parse_string_single_quotes() {
+        let mut p = Parser::new("'abc'");
+        let v = p.parse_value().unwrap();
+        assert_eq!(v, CellType::Str(b"abc".to_vec()));
+    }
+
+    #[test]
+    fn parse_string_double_quotes() {
+        let mut p = Parser::new("\"abc\"");
+        let v = p.parse_value().unwrap();
+        assert_eq!(v, CellType::Str(b"abc".to_vec()));
+    }
+
+    #[test]
+    fn parse_string_escape() {
+        let mut p = Parser::new("'a\\'b'");
+        let v = p.parse_value().unwrap();
+        assert_eq!(v, CellType::Str(b"a'b".to_vec()));
+    }
+
+    #[test]
+    fn parse_string_backslash() {
+        let mut p = Parser::new("'a\\\\b'");
+        let v = p.parse_value().unwrap();
+        assert_eq!(v, CellType::Str(b"a\\b".to_vec()));
+    }
+
+    #[test]
+    fn parse_value_fail() {
+        let mut p = Parser::new("abc");
+        assert!(p.parse_value().is_err());
     }
 }
