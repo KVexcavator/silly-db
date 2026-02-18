@@ -1,0 +1,115 @@
+AST - Abstract Syntax Tree(абстрактное синтаксическое дерево)
+структурированное представление кода (или SQL) в виде данных, а не текста
+Например, есть текст, который надо каждый раз парсить перед выполнением:
+```sql
+select a,b from t where c=1;
+```
+он преобразуется
+```rust
+StmtSelect {
+    table: "t",
+    cols: vec!["a", "b"],
+    keys: vec![
+        NamedCell { column: "c", value: I64(1) }
+    ]
+}
+```
+AST это структурированная модель запроса, готовая к выполнению
+===
+Parse SELECT
+---
+Структуры
+Поскольку реализован лишь небольшой набор функций, оператор SELECT поддерживает только одну фиксированную форму: запрос одной строки по первичному ключу. Например, для таблицы с первичным ключом (c, d) поддерживается только следующий запрос:
+```sql
+select a,b from t where c=1 and d='e';
+```
+который нужно представить в виде структур данных:
+```rust
+StmtSelect {
+    table: "t",
+    cols: vec!["a", "b"],
+    keys: vec![
+        NamedCell { column: "c", value: I64(1) },
+        NamedCell { column: "d", value: Str(b"e".to_vec()) },
+    ]
+}
+```
+для этого определеныы структуры:
+```rust
+struct StmtSelect {
+  table: String,
+  cols: Vec<String>,
+  keys: Vec<NamedCell>,
+}
+struct  NamedCell {
+  column: String,
+  value: CellType,
+}
+```
+---
+Синтаксический анализ
+Синтаксический анализ обрабатывает токены слева направо при построении структур данных. Например, анализ a = 123 приводит к созданию NamedCell. При этом последовательно вызываются функции try_name(), try_punctuation() и parse_value():
+```rust
+pub fn parse_equal(&mut self) -> Result<NamedCell, ParserError> {
+    let column = self.try_name().ok_or(ParserError::ExpectValue)?;
+
+    if !self.try_punctuation("=") {
+        return Err(ParserError::ExpectValue);
+    }
+
+    let value = self.parse_value()?;
+
+    Ok(NamedCell::new(column, value))
+}
+```
+функция try_punctuatio() обрабатывает символ пунктуации
+```rust
+pub fn try_punctuation(&mut self, pnt: &str) -> bool {...}
+```
+при разборе части WHERE в цикле вызывается parse_where()
+```rust
+pub fn parse_where(&mut self) -> Result<Vec<NamedCell>, ParserError> {...}
+```
+если WHERE нет -> ok
+иначе:
+    parse_equal
+    пока есть AND -> parse_equal
+---
+Разбор операторов SELECT
+Ключевое слово select используется для различения операторов SQL.
+Затем следует список имен столбцов, разделенных запятыми, заканчивающийся на from
+```rust
+pub fn parse_select(&mut self) -> Result<StmtSelect, ParserError> {
+    if !self.try_keyword("SELECT"){
+        return Err(ParserError::ExpectValue);
+    }
+
+    let mut cols = Vec::new();
+
+    loop {
+        if let Some(name) = self.try_name() {
+            cols.push(name);
+        } else {
+            return Err(ParserError::ExpectValue);
+        }
+
+        if self.try_keyword("FROM") {
+            break;
+        }
+
+        if !self.try_punctuation(",") {
+            return Err(ParserError::ExpectValue);
+        }
+    }
+
+    if cols.is_empty() {
+        return Err(ParserError::ExpectValue);
+    }
+
+    let table = self.try_name().ok_or(ParserError::ExpectValue)?;
+
+    let keys = self.parse_where()?;
+
+    Ok(StmtSelect { table, cols, keys })
+}
+```

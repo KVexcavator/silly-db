@@ -1,5 +1,6 @@
 use crate::model::data_types::CellType;
 use crate::sql::utils::{is_digit, is_name_continue, is_name_start, is_separator, is_space};
+use crate::sql::ast::{NamedCell, StmtSelect};
 
 pub struct Parser<'a> {
     buffer: &'a [u8],
@@ -137,7 +138,7 @@ impl<'a> Parser<'a> {
             return Err(ParserError::UnterminatedString);
         }
 
-        self.position +=1;
+        self.position += 1;
 
         let mut outer = Vec::new();
 
@@ -163,6 +164,88 @@ impl<'a> Parser<'a> {
             }
         }
         Err(ParserError::UnterminatedString)
+    }
+
+    pub fn try_punctuation(&mut self, pnt: &str) -> bool {
+        self.skip_spaces();
+
+        let bytes = pnt.as_bytes();
+
+        if (self.buffer.len() - self.position) < bytes.len() {
+            return false;
+        }
+
+        if &self.buffer[self.position..self.position + bytes.len()] != bytes {
+            return false;
+        }
+
+        self.position += bytes.len();
+        true
+    }
+
+    pub fn parse_equal(&mut self) -> Result<NamedCell, ParserError> {
+        let column = self.try_name().ok_or(ParserError::ExpectValue)?;
+
+        if !self.try_punctuation("=") {
+            return Err(ParserError::ExpectValue);
+        }
+
+        let value = self.parse_value()?;
+
+        Ok(NamedCell::new(column, value))
+    }
+
+    pub fn parse_where(&mut self) -> Result<Vec<NamedCell>, ParserError> {
+        let mut keys = Vec::new();
+
+        if !self.try_keyword("WHERE") {
+            return Ok(keys);
+        }
+
+        loop {
+            let name_cell = self.parse_equal()?;
+            keys.push(name_cell);
+
+            if !self.try_keyword("AND") {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
+
+    pub fn parse_select(&mut self) -> Result<StmtSelect, ParserError> {
+        if !self.try_keyword("SELECT"){
+            return Err(ParserError::ExpectValue);
+        }
+
+        let mut cols = Vec::new();
+
+        loop {
+            if let Some(name) = self.try_name() {
+                cols.push(name);
+            } else {
+                return Err(ParserError::ExpectValue);
+            }
+
+            if self.try_keyword("FROM") {
+                break;
+            }
+
+            if !self.try_punctuation(",") {
+                return Err(ParserError::ExpectValue);
+            }
+        }
+
+        if cols.is_empty() {
+            return Err(ParserError::ExpectValue);
+        }
+
+        let table = self.try_name().ok_or(ParserError::ExpectValue)?;
+
+        let keys = self.parse_where()?;
+
+        Ok(StmtSelect { table, cols, keys })
     }
 
     #[allow(unused)]
@@ -275,5 +358,31 @@ mod tests {
     fn parse_value_fail() {
         let mut p = Parser::new("abc");
         assert!(p.parse_value().is_err());
+    }
+
+    #[test]
+    fn parse_select_simple() {
+        let sql = "select a,b from t where c=1 and d='e'";
+        let mut p = Parser::new(sql);
+
+        let stmt = p.parse_select().unwrap();
+
+        assert_eq!(
+            stmt,
+            StmtSelect {
+                table: "t".to_string(),
+                cols: vec!["a".to_string(), "b".to_string()],
+                keys: vec![
+                    NamedCell {
+                        column: "c".to_string(),
+                        value: CellType::I64(1),
+                    },
+                    NamedCell {
+                        column: "d".to_string(),
+                        value: CellType::Str(b"e".to_vec()),
+                    },
+                ],
+            }
+        );
     }
 }
