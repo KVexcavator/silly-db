@@ -1,0 +1,54 @@
+
+структура:
+```
+sql/
+ ├── mod.rs
+ ├── parser/
+ │    ├── mod.rs
+ │    ├── core.rs        // Parser struct + low-level helpers
+ │    ├── value.rs       // parse_value / int / string
+ │    ├── expr.rs        // parse_equal / parse_where
+ │    ├── select.rs
+ │    ├── insert.rs
+ │    ├── update.rs
+ │    ├── delete.rs
+ │    └── create.rs
+ ├── ast.rs
+ └── utils.rs
+```
+parser/core.rs:
+- struct Parser
+- new
+- peek
+- skip_spaces
+- try_name
+- try_keyword
+- try_keywords
+- try_punctuation
+- parse_stmt
+
+arser/value.rs
+- parse_value
+- parse_int
+- parse_string
+```rust
+impl<'a> Parser<'a> {
+    pub fn parse_value(&mut self) -> Result<CellType, ParserError> { ... }
+}
+```
+parser/select.rs
+- parse_select
+- parse_where
+- parse_equal
+```
+mod.rs
+```
+pub mod core;
+mod value;
+mod select;
+```
+
+И в core.rs:
+```rust
+pub use self::Parser;
+```

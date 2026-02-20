@@ -1,6 +1,8 @@
 use crate::model::data_types::CellType;
+use crate::sql::ast::{
+    NamedCell, Statement, StmtCreateTable, StmtDelete, StmtInsert, StmtSelect, StmtUpdate,
+};
 use crate::sql::utils::{is_digit, is_name_continue, is_name_start, is_separator, is_space};
-use crate::sql::ast::{NamedCell, StmtSelect};
 
 pub struct Parser<'a> {
     buffer: &'a [u8],
@@ -13,6 +15,8 @@ pub enum ParserError {
     InvalidInt,
     UnterminatedString,
     InvalidEscape,
+    UnknownStatement,
+    NotImplemented,
 }
 
 impl<'a> Parser<'a> {
@@ -79,6 +83,19 @@ impl<'a> Parser<'a> {
         }
 
         self.position = next_pos;
+        true
+    }
+
+    pub fn try_keywords(&mut self, kws: &[&str]) -> bool {
+        let start = self.position;
+
+        for kw in kws {
+            if !self.try_keyword(kw) {
+                self.position = start;
+                return false;
+            }
+        }
+
         true
     }
 
@@ -214,11 +231,38 @@ impl<'a> Parser<'a> {
         Ok(keys)
     }
 
-    pub fn parse_select(&mut self) -> Result<StmtSelect, ParserError> {
-        if !self.try_keyword("SELECT"){
-            return Err(ParserError::ExpectValue);
+    pub fn parse_stmt(&mut self) -> Result<Statement, ParserError> {
+        self.skip_spaces();
+
+        if self.try_keyword("SELECT") {
+            let stmt = self.parse_select()?;
+            return Ok(Statement::Select(stmt));
         }
 
+        if self.try_keywords(&["CREATE", "TABLE"]) {
+            let stmt = self.parse_create_table()?;
+            return Ok(Statement::CreateTable(stmt));
+        }
+
+        if self.try_keywords(&["INSERT", "INTO"]) {
+            let stmt = self.parse_insert()?;
+            return Ok(Statement::Insert(stmt));
+        }
+
+        if self.try_keyword("UPDATE") {
+            let stmt = self.parse_update()?;
+            return Ok(Statement::Update(stmt));
+        }
+
+        if self.try_keywords(&["DELETE", "FROM"]) {
+            let stmt = self.parse_delete()?;
+            return Ok(Statement::Delete(stmt));
+        }
+
+        Err(ParserError::UnknownStatement)
+    }
+
+    pub fn parse_select(&mut self) -> Result<StmtSelect, ParserError> {
         let mut cols = Vec::new();
 
         loop {
@@ -246,6 +290,22 @@ impl<'a> Parser<'a> {
         let keys = self.parse_where()?;
 
         Ok(StmtSelect { table, cols, keys })
+    }
+
+    fn parse_create_table(&mut self) -> Result<StmtCreateTable, ParserError> {
+        Err(ParserError::NotImplemented)
+    }
+
+    fn parse_insert(&mut self) -> Result<StmtInsert, ParserError> {
+        Err(ParserError::NotImplemented)
+    }
+
+    fn parse_update(&mut self) -> Result<StmtUpdate, ParserError> {
+        Err(ParserError::NotImplemented)
+    }
+
+    fn parse_delete(&mut self) -> Result<StmtDelete, ParserError> {
+        Err(ParserError::NotImplemented)
     }
 
     #[allow(unused)]
@@ -365,24 +425,65 @@ mod tests {
         let sql = "select a,b from t where c=1 and d='e'";
         let mut p = Parser::new(sql);
 
-        let stmt = p.parse_select().unwrap();
+        let stmt = p.parse_stmt().unwrap();
 
-        assert_eq!(
-            stmt,
-            StmtSelect {
-                table: "t".to_string(),
-                cols: vec!["a".to_string(), "b".to_string()],
-                keys: vec![
-                    NamedCell {
-                        column: "c".to_string(),
-                        value: CellType::I64(1),
-                    },
-                    NamedCell {
-                        column: "d".to_string(),
-                        value: CellType::Str(b"e".to_vec()),
-                    },
-                ],
+        match stmt {
+            Statement::Select(stmt) => {
+                assert_eq!(
+                    stmt,
+                    StmtSelect {
+                        table: "t".to_string(),
+                        cols: vec!["a".to_string(), "b".to_string()],
+                        keys: vec![
+                            NamedCell {
+                                column: "c".to_string(),
+                                value: CellType::I64(1),
+                            },
+                            NamedCell {
+                                column: "d".to_string(),
+                                value: CellType::Str(b"e".to_vec()),
+                            },
+                        ],
+                    }
+                );
             }
-        );
+            _ => panic!("expected select"),
+        }
+    }
+
+    #[test]
+    fn parse_stmt_select() {
+        let sql = "select a from t where id=1";
+        let mut p = Parser::new(sql);
+
+        let stmt = p.parse_stmt().unwrap();
+
+        match stmt {
+            Statement::Select(s) => {
+                assert_eq!(s.table, "t");
+                assert_eq!(s.cols, vec!["a"]);
+            }
+            _ => panic!("expected select"),
+        }
+    }
+
+    #[test]
+    fn parse_stmt_create_table_recognized() {
+        let sql = "create table t (a int64)";
+        let mut p = Parser::new(sql);
+
+        let err = p.parse_stmt().unwrap_err();
+
+        assert_eq!(err, ParserError::NotImplemented);
+    }
+
+    #[test]
+    fn parse_stmt_insert_recognized() {
+        let sql = "insert into t values (1)";
+        let mut p = Parser::new(sql);
+
+        let err = p.parse_stmt().unwrap_err();
+
+        assert_eq!(err, ParserError::NotImplemented);
     }
 }

@@ -1,0 +1,65 @@
+Надо обрабтать другие Statements:
+```sql
+create table t (
+  a int64,
+  b string,
+  c string,
+  primary key (b, c)
+);
+insert into t values (1, 'x', 'y');
+update t set a = 1 where b = 'x' and c = 'y';
+delete from t where b = 'x' and c = 'y';
+```
+Парсер смотрит первые 1–2 ключевых слова и решает:
+```
+parse_stmt()
+    if SELECT  -> parse_select()
+    if INSERT  -> parse_insert()
+    ...
+```
+Добаляются соответствующие типы:
+```go 
+pub struct StmtCreateTable {
+    pub table: String,
+    pub cols: Vec<Column>,
+    pub pkey: Vec<String>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct StmtInsert {
+    pub table: String,
+    pub values: Vec<CellType>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct StmtUpdate {
+    pub table: String,
+    pub keys: Vec<NamedCell>,
+    pub values: Vec<NamedCell>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct StmtDelete {
+    pub table: String,
+    pub keys: Vec<NamedCell>,
+}
+```
+В настоящее время поддерживаются только операции с одной строкой по первичному ключу, поэтому часть WHERE соответствует ключам. Запросы диапазонов и индексы будут добавлены позже с более сложным синтаксисом.
+---
+Распознавание SQL-запросов
+Функция parse_stmt() возвращает различные типы запросов, в соответствии с enum Statement:
+```rust
+pub fn parse_stmt(&mut self) -> Result<Statement, ParserError> {...}
+```
+
+Функция try_keywords() для нескольких слов
+```
+tryKeyword("CREATE", "TABLE")
+```
+```rust
+pub fn try_keywords(&mut self, kws: &[&str]) -> bool {...}
+```
+Функция parse_select() тоже обновлена, болше не проверяет переданное знасение "SELECT" сама, это делаетсы в parse_stmt()
+важно здесь
+parse_stmt() -> съедает SELECT
+parse_select() -> НЕ должен ожидать SELECT

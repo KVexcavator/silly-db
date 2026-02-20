@@ -113,3 +113,13 @@ pub fn parse_select(&mut self) -> Result<StmtSelect, ParserError> {
     Ok(StmtSelect { table, cols, keys })
 }
 ```
+===
+parse_select
+    ├── try_name (columns)
+    ├── table
+    └── parse_where
+            ├── parse_equal
+            ├── AND
+            ├── parse_equal
+            └── ...
+Каждый уровень собирает Vec своего уровня.
