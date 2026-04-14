@@ -1,11 +1,5 @@
 use crate::model::data_types::CellType;
-
-#[derive(Debug, PartialEq)]
-pub struct Column {
-    pub name: String,
-    // TODO data type for Column wiII be later
-    pub data_type: String,
-}
+use crate::model::table_schema::Column;
 
 #[derive(Debug, PartialEq)]
 pub struct NamedCell {

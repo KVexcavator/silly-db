@@ -1,2 +1,557 @@
+Выполнение разобранного SQL-запроса
+Некоторые интерфейсы реляционных баз данных были реализованы ранее:
+```src/model/crud_api.rs
+...
+pub struct DB {
+    pub kv: KV,
+}
+...
+impl DB {
+  ...
+    pub fn insert(&mut self, schema: &Schema, row: &Row) -> Result<bool, DBError> {
+        self.write_row(schema, row, UpdateMode::Insert)
+    }
+    pub fn upsert(&mut self, schema: &Schema, row: &Row) -> Result<bool, DBError> {
+        self.write_row(schema, row, UpdateMode::Upsert)
+    }
+    pub fn update(&mut self, schema: &Schema, row: &Row) -> Result<bool, DBError> {
+        self.write_row(schema, row, UpdateMode::Update)
+    }
+    pub fn delete(&mut self, schema: &Schema, row: &Row) -> Result<bool, DBError> {
+        let key = row.encode_key(schema);
+        Ok(self.kv.del(&key)?)
+    }
+    pub fn select(&self, schema: &Schema, row: &mut Row) -> Result<bool, DBError> {
+        let key = row.encode_key(schema);
 
+        let Some(val) = self.kv.get(&key)? else {
+            return Ok(false);
+        };
 
+        row.decode_val(schema, &val)?;
+        Ok(true)
+    }
+}
+...
+```
+Теперь SQL-запрос преобразуется в типы данных StmtXXX, поэтому эти две части можно соединить:
+```go 
+type SQLResult struct {
+    Updated int
+    Header []string
+    Values []Row
+}
+func (db *DB) ExecStmt(stmt interface{}) (r SQLResult, err error) {
+    switch ptr := stmt.(type) {
+        case *StmtCreatTable:
+            err = db.execCreateTable(ptr)
+        case *StmtSelect:
+            r.Header = ptr.cols
+            r.Values, err = db.execSelect(ptr)
+        case *StmtInsert:
+            r.Updated, err = db.execInsert(ptr)
+        case *StmtUpdate:
+            r.Updated, err = db.execUpdate(ptr)
+        case *StmtDelete:
+            r.Updated, err = db.execDelete(ptr)
+        default:
+            panic("unreachable")
+    }
+    return
+}
+```
+SQLResult возвращает результат выполнения оператора:
+• Оператор SELECT возвращает заголовок и значения. Это срез, поскольку позже он вернет несколько строк.
+• Другие операторы UPDATE возвращают Updated, количество затронутых строк. На данный момент это значение может быть только
+0 или 1.
+---
+Сохранение схем таблиц
+Все операции зависят от схем, поэтому сначала реализуйте метод execCreateTable(). Сериализуйте схему таблицы и сохраните ее под одним ключом. База данных добавляет кэш карт, ключом которого является имя таблицы:
+```src/model/crud_api.rs уже есть сейчас
+pub struct DB {
+    pub kv: KV,
+}
+```
+```go 
+type DB struct {
+    KV  KV
+    tables map[string]Schema
+}
+func (db *DB) GetSchema(table string) (Schema, error) {
+    schema, ok := db.tables[table]
+    if !ok {
+        val, ok, err := db.KV.Get([]byte("@schema_" + table))
+        if err == nil && ok {
+            err = json.Unmarshal(val, &schema)
+        }
+        if err != nil {
+            return Schema{}, err
+        }
+        if !ok {
+            return Schema{}, errors.New("table is not found")
+        }
+        db.tables[table] = schema
+    }
+    return schema, nil
+}
+```
+Реализуйте метод execCreateTable():
+1. Преобразуйте StmtCreatTable в Schema
+2. Сохраните Schema под ключом @schema_ + имя таблицы
+3. Добавьте её в карту DB.tables
+```go
+func (db *DB) execCreateTable(stmt *StmtCreatTable) (err error)
+```
+---
+Выполнить SELECT
+Лучше разбить это на небольшие вспомогательные функции, которые можно повторно использовать в других операторах:
+1. lookupColumns(): проверить имена столбцов (select a,b), вернуть индексы в schema.Cols.
+2. makePKey(): проверить, соответствует ли условие WHERE первичному ключу, вернуть строку с заполненным ключом.
+3. subsetRow(): вернуть только столбцы из select a,b.
+```go 
+func (db *DB) execSelect(stmt *StmtSelect) ([]Row, error) {
+    schema, ok := db.tables[stmt.table]
+    if !ok {
+        return nil, errors.New("table is not found")
+    }
+    indices, err := lookupColumns(schema.Cols, stmt.cols)
+    if err != nil {
+        return nil, err
+    }
+    row, err := makePKey(&schema, stmt.keys)
+    if err != nil {
+        return nil, err
+    }
+    if ok, err = db.Select(&schema, row); err != nil {
+        return nil, err
+    }
+    if !ok {
+        return nil, nil
+    }
+    row = subsetRow(row, indices)
+    return []Row{row}, nil
+}
+```
+---
+Выполните операции INSERT, UPDATE, DELETE.
+Реализуйте остальные SQL-запросы, вызвав методы DB.Insert(), DB.Update() и DB.Delete():
+```go
+unc (db *DB) execInsert(stmt *StmtInsert) (count int, err error)
+func (db *DB) execUpdate(stmt *StmtUpdate) (count int, err error)
+func (db *DB) execDelete(stmt *StmtDelete) (count int, err error)
+```
+Требования:
+• Если ключевое слово "KV" обновлено, вернуть count = 1, в противном случае вернуть 0.
+• Проверить, что StmtXXX соответствует схеме.
+Для команды UPDATE мы не поддерживаем обновление первичных ключей. UPDATE изменяет только порт V ключевого слова "KV". Обновление первичного ключа означало бы удаление старого ключа и вставку нового, что требуется крайне редко.
+====
+уже есть:
+- AST (Statement, StmtSelect, …)
+- Parser  возвращает Statement
+Низкий уровень DB:
+    - insert
+    - update
+    - delete
+    - select
+- Schema
+- Row
+
+следующий слой:
+Statement  ->  DB.exec_stmt()  ->  CRUD API
+---
+1. Результат выполнения:
+```go
+type SQLResult struct {
+    Updated int
+    Header []string
+    Values []Row
+}
+```
+В Rust:
+src/sql/result.rs
+```rust
+use crate::model::table_row::Row;
+
+#[derive(Debug, Default, PartialEq)]
+pub struct SQLResult {
+    pub updated: usize,
+    pub header: Vec<String>,
+    pub values: Vec<Row>,
+}
+```
+# 2. Кэш схем
+Сейчас:
+```src/model/crud_api.rs
+pub struct DB {
+    pub kv: KV,
+}
+```
+Нужно добавить:
+```src/model/crud_api.rs
+use std::collections::HashMap;
+use crate::model::table_schema::Schema;
+
+pub struct DB {
+    pub kv: KV,
+    pub tables: HashMap<String, Schema>,
+}
+```
+И в open():
+```src/model/crud_api.rs
+Ok(DB {
+    kv: KV::open(path)?,
+    tables: HashMap::new(),
+})
+```
+3. Загрузка схемы из KV
+должен быть ключ:
+```
+@schema_<table>
+```
+Добавить:
+```src/model/crud_api.rs
+use crate::model::table_schema::Schema;
+use serde_json;
+
+impl DB {
+    pub fn get_schema(&mut self, table: &str) -> Result<Schema, DBError> {
+        if let Some(s) = self.tables.get(table) {
+            return Ok(s.clone());
+        }
+
+        let key = format!("@schema_{}", table).into_bytes();
+
+        let Some(val) = self.kv.get(&key)? else {
+            return Err(DBError::Decode(
+                crate::model::data_types::DecodeError::UnexpectedEOF
+            ));
+        };
+
+        let schema: Schema = serde_json::from_slice(&val)
+            .map_err(|_| crate::model::data_types::DecodeError::UnexpectedEOF)?;
+
+        self.tables.insert(table.to_string(), schema.clone());
+        Ok(schema)
+    }
+}
+```
+Schema должен иметь Serialize/Deserialize
+```src/model/table_schema.rs
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Schema { ... }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Column { ... }
+```
+4. ExecStmt — главный переключатель
+```src/sql/exec.rs
+use crate::model::crud_api::{DB, DBError};
+use crate::sql::ast::*;
+use crate::sql::result::SQLResult;
+
+impl DB {
+    pub fn exec_stmt(&mut self, stmt: Statement) -> Result<SQLResult, DBError> {
+        match stmt {
+            Statement::CreateTable(s) => {
+                self.exec_create_table(&s)?;
+                Ok(SQLResult::default())
+            }
+
+            Statement::Select(s) => {
+                let rows = self.exec_select(&s)?;
+                Ok(SQLResult {
+                    header: s.cols.clone(),
+                    values: rows,
+                    updated: 0,
+                })
+            }
+
+            Statement::Insert(s) => {
+                let updated = self.exec_insert(&s)?;
+                Ok(SQLResult {
+                    updated,
+                    ..Default::default()
+                })
+            }
+
+            Statement::Update(s) => {
+                let updated = self.exec_update(&s)?;
+                Ok(SQLResult {
+                    updated,
+                    ..Default::default()
+                })
+            }
+
+            Statement::Delete(s) => {
+                let updated = self.exec_delete(&s)?;
+                Ok(SQLResult {
+                    updated,
+                    ..Default::default()
+                })
+            }
+        }
+    }
+}
+```
+5. execCreateTable:
+1. AST -> Schema
+2. сохранить в KV
+3. в кэш
+
+```src/sql/exec.rs
+use serde_json;
+
+impl DB {
+    pub fn exec_create_table(&mut self, stmt: &StmtCreateTable) -> Result<(), DBError> {
+        // pkey: имена → индексы
+        let mut pkey_idx = Vec::new();
+
+        for name in &stmt.pkey {
+            let idx = stmt.cols
+                .iter()
+                .position(|c| &c.name == name)
+                .ok_or(crate::model::data_types::DecodeError::UnexpectedEOF)?;
+
+            pkey_idx.push(idx);
+        }
+
+        let schema = Schema {
+            table: stmt.table.clone(),
+            cols: stmt.cols.clone(),
+            pkey: pkey_idx,
+        };
+
+        let key = format!("@schema_{}", stmt.table).into_bytes();
+        let val = serde_json::to_vec(&schema).unwrap();
+
+        // просто set (Upsert)
+        self.kv.set_if_existed(&key, &val, crate::model::update_modes::UpdateMode::Upsert)?;
+
+        self.tables.insert(stmt.table.clone(), schema);
+
+        Ok(())
+    }
+}
+```
+6. execSelect (по книге — point lookup)
+Сначала helper: собрать ключ из WHERE
+```src/sql/exec.rs
+use crate::model::table_row::Row;
+
+impl DB {
+    fn make_pkey(&self, schema: &Schema, keys: &[NamedCell]) -> Result<Row, DBError> {
+        let mut row = schema.new_row();
+
+        for k in keys {
+            let idx = schema.cols
+                .iter()
+                .position(|c| c.name == k.column)
+                .ok_or(crate::model::data_types::DecodeError::UnexpectedEOF)?;
+
+            row.cells[idx] = k.value.clone();
+        }
+
+        Ok(row)
+    }
+
+    pub fn exec_select(&mut self, stmt: &StmtSelect) -> Result<Vec<Row>, DBError> {
+        let schema = self.get_schema(&stmt.table)?;
+
+        let mut row = self.make_pkey(&schema, &stmt.keys)?;
+
+        let ok = self.select(&schema, &mut row)?;
+
+        if !ok {
+            return Ok(vec![]);
+        }
+
+        Ok(vec![row])
+    }
+}
+```
+7. execInsert / Update / Delete
+```src/sql/exec.rs
+impl DB {
+    pub fn exec_insert(&mut self, stmt: &StmtInsert) -> Result<usize, DBError> {
+        let schema = self.get_schema(&stmt.table)?;
+
+        let mut row = schema.new_row();
+        row.cells = stmt.values.clone();
+
+        let ok = self.insert(&schema, &row)?;
+        Ok(ok as usize)
+    }
+
+    pub fn exec_update(&mut self, stmt: &StmtUpdate) -> Result<usize, DBError> {
+        let schema = self.get_schema(&stmt.table)?;
+
+        let mut row = self.make_pkey(&schema, &stmt.keys)?;
+
+        for v in &stmt.values {
+            let idx = schema.cols
+                .iter()
+                .position(|c| c.name == v.column)
+                .ok_or(crate::model::data_types::DecodeError::UnexpectedEOF)?;
+
+            row.cells[idx] = v.value.clone();
+        }
+
+        let ok = self.update(&schema, &row)?;
+        Ok(ok as usize)
+    }
+
+    pub fn exec_delete(&mut self, stmt: &StmtDelete) -> Result<usize, DBError> {
+        let schema = self.get_schema(&stmt.table)?;
+
+        let row = self.make_pkey(&schema, &stmt.keys)?;
+
+        let ok = self.delete(&schema, &row)?;
+        Ok(ok as usize)
+    }
+}
+```
+===
+Тестируем весь pipeline:
+SQL -> Parser -> AST -> DB.exec_stmt() -> KV -> результат
+```Cargo.toml
+[dev-dependencies]
+tempfile = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+```
+
+E2E тест
+```src/sql/tests_exec.rs
+#[cfg(test)]
+mod tests {
+    use tempfile::tempdir;
+
+    use crate::model::crud_api::DB;
+    use crate::sql::parsel::core::Parser;
+    use crate::sql::exec::SQLResult; // если exec.rs в sql
+    use crate::sql::ast::Statement;
+
+    fn exec(db: &mut DB, sql: &str) -> SQLResult {
+        let mut parser = Parser::new(sql);
+        let stmt = parser.parse_stmt().expect("parse failed");
+        db.exec_stmt(stmt).expect("exec failed")
+    }
+
+    #[test]
+    fn create_insert_select() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        let mut db = DB::open(&path).unwrap();
+
+        // CREATE
+        exec(
+            &mut db,
+            "create table t (
+                a int64,
+                b int64,
+                primary key (b)
+            )",
+        );
+
+        // INSERT
+        let r = exec(&mut db, "insert into t values (10, 1)");
+        assert_eq!(r.updated, 1);
+
+        // SELECT
+        let r = exec(&mut db, "select a,b from t where b=1");
+
+        assert_eq!(r.values.len(), 1);
+        assert_eq!(r.header, vec!["a", "b"]);
+
+        let row = &r.values[0];
+        assert_eq!(row.cells.len(), 2);
+    }
+
+    #[test]
+    fn insert_duplicate_returns_zero() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        let mut db = DB::open(&path).unwrap();
+
+        exec(
+            &mut db,
+            "create table t (
+                a int64,
+                b int64,
+                primary key (b)
+            )",
+        );
+
+        let r1 = exec(&mut db, "insert into t values (10, 1)");
+        let r2 = exec(&mut db, "insert into t values (20, 1)");
+
+        assert_eq!(r1.updated, 1);
+        assert_eq!(r2.updated, 0);
+    }
+
+    #[test]
+    fn update_row() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        let mut db = DB::open(&path).unwrap();
+
+        exec(
+            &mut db,
+            "create table t (
+                a int64,
+                b int64,
+                primary key (b)
+            )",
+        );
+
+        exec(&mut db, "insert into t values (10, 1)");
+
+        let r = exec(&mut db, "update t set a=20 where b=1");
+        assert_eq!(r.updated, 1);
+
+        let r = exec(&mut db, "select a,b from t where b=1");
+        let row = &r.values[0];
+
+        use crate::model::data_types::CellType;
+        assert_eq!(row.cells[0], CellType::I64(20));
+    }
+
+    #[test]
+    fn delete_row() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("db.log");
+
+        let mut db = DB::open(&path).unwrap();
+
+        exec(
+            &mut db,
+            "create table t (
+                a int64,
+                b int64,
+                primary key (b)
+            )",
+        );
+
+        exec(&mut db, "insert into t values (10, 1)");
+
+        let r = exec(&mut db, "delete from t where b=1");
+        assert_eq!(r.updated, 1);
+
+        let r = exec(&mut db, "select a,b from t where b=1");
+        assert!(r.values.is_empty());
+    }
+}
+```
+Если файл лежит в src/sql/tests_exec.rs, добавь в src/sql/mod.rs:
+```rust
+pub mod exec;
+pub mod result;
+
+#[cfg(test)]
+mod tests_exec;
+```
